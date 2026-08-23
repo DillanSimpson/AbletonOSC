@@ -113,8 +113,13 @@ class TrackHandler(AbletonOSCHandler):
         # Load a stock audio effect onto a track by browser name, e.g. "Utility".
         #   /live/track/add_device  <track_index> <device_name> [<insert_before_index>]
         # Live has no API to instantiate a device directly; the only route is selecting
-        # the track and calling browser.load_item(). Insert position follows the
-        # selected device, so the resulting chain is returned for verification.
+        # the track and calling browser.load_item().
+        #
+        # NOTE: insert_before_index does not work. Verified against Live 12.4.3 —
+        # load_item() always appends to the end of the chain, and moving the
+        # selection with Song.View.select_device() beforehand does not change that.
+        # The argument is retained in case a future Live release honours it. The
+        # resulting chain is returned so the caller can see where the device landed.
         #--------------------------------------------------------------------------------
         def find_browser_item(root, name, depth=0):
             if depth > 5:
