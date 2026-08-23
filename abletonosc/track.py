@@ -139,7 +139,15 @@ class TrackHandler(AbletonOSCHandler):
                     return "not_found", name
                 self.song.view.selected_track = track
                 if 0 <= before < len(track.devices):
-                    track.view.selected_device = track.devices[before]
+                    #------------------------------------------------------------------
+                    # Track.View.selected_device has no setter; Song.View.select_device
+                    # is the only way to move the insertion point. Falling back to a
+                    # plain append is better than failing the load outright.
+                    #------------------------------------------------------------------
+                    try:
+                        self.song.view.select_device(track.devices[before])
+                    except Exception as e:
+                        self.logger.info("select_device unavailable, appending: %s" % str(e))
                 browser.load_item(item)
                 return ("loaded", name, len(track.devices),
                         ",".join(d.name for d in track.devices))
