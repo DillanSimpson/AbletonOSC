@@ -1,3 +1,4 @@
+import Live
 from typing import Tuple, Any, Callable, Optional
 from .handler import AbletonOSCHandler
 
@@ -88,6 +89,12 @@ class TrackHandler(AbletonOSCHandler):
                                         create_track_callback(self._start_mixer_listen, prop, include_track_id=True))
             self.osc_server.add_handler("/live/track/stop_listen/%s" % prop,
                                         create_track_callback(self._stop_mixer_listen, prop, include_track_id=True))
+            #----------------------------------------------------------------------------
+            # Read-only display string, e.g. "-6.3 dB" / "50L". Live's fader curve is
+            # nonlinear, so the raw normalised value cannot be converted client-side.
+            #----------------------------------------------------------------------------
+            self.osc_server.add_handler("/live/track/get/%s_string" % prop,
+                                        create_track_callback(self._get_mixer_property_string, prop))
 
         # Still need to fix these
         # Might want to find a better approach that unifies volume and sends
@@ -101,6 +108,71 @@ class TrackHandler(AbletonOSCHandler):
 
         self.osc_server.add_handler("/live/track/get/send", create_track_callback(track_get_send))
         self.osc_server.add_handler("/live/track/set/send", create_track_callback(track_set_send))
+
+        #--------------------------------------------------------------------------------
+        # Load a stock audio effect onto a track by browser name, e.g. "Utility".
+        #   /live/track/add_device  <track_index> <device_name> [<insert_before_index>]
+        # Live has no API to instantiate a device directly; the only route is selecting
+        # the track and calling browser.load_item(). Insert position follows the
+        # selected device, so the resulting chain is returned for verification.
+        #--------------------------------------------------------------------------------
+        def find_browser_item(root, name, depth=0):
+            if depth > 5:
+                return None
+            for child in root.children:
+                if child.name.lower() == name.lower() and child.is_loadable:
+                    return child
+            for child in root.children:
+                if len(child.children):
+                    found = find_browser_item(child, name, depth + 1)
+                    if found is not None:
+                        return found
+            return None
+
+        def track_add_device(track, params: Tuple[Any] = ()):
+            name = str(params[0])
+            before = int(params[1]) if len(params) > 1 else -1
+            try:
+                browser = Live.Application.get_application().browser
+                item = find_browser_item(browser.audio_effects, name)
+                if item is None:
+                    return "not_found", name
+                self.song.view.selected_track = track
+                if 0 <= before < len(track.devices):
+                    track.view.selected_device = track.devices[before]
+                browser.load_item(item)
+                return ("loaded", name, len(track.devices),
+                        ",".join(d.name for d in track.devices))
+            except Exception as e:
+                self.logger.error("add_device failed: %s" % str(e))
+                return "error", str(e)
+
+        self.osc_server.add_handler("/live/track/add_device", create_track_callback(track_add_device))
+
+        #--------------------------------------------------------------------------------
+        # List loadable stock audio effects, so the available device set can be read
+        # from this install rather than inferred from edition documentation.
+        #--------------------------------------------------------------------------------
+        def browser_list_audio_effects(params: Tuple[Any] = ()):
+            try:
+                names = []
+
+                def walk(node, depth=0):
+                    if depth > 3:
+                        return
+                    for child in node.children:
+                        if child.is_loadable:
+                            names.append(child.name)
+                        elif len(child.children):
+                            walk(child, depth + 1)
+
+                walk(Live.Application.get_application().browser.audio_effects)
+                return tuple(sorted(set(names)))
+            except Exception as e:
+                self.logger.error("list_audio_effects failed: %s" % str(e))
+                return "error", str(e)
+
+        self.osc_server.add_handler("/live/browser/list_audio_effects", browser_list_audio_effects)
 
         def track_delete_clip(track, params: Tuple[Any]):
             clip_index, = params
@@ -240,6 +312,10 @@ class TrackHandler(AbletonOSCHandler):
         parameter_object = getattr(target.mixer_device, prop)
         self.logger.info("Getting property for %s: %s = %s" % (self.class_identifier, prop, parameter_object.value))
         return parameter_object.value,
+
+    def _get_mixer_property_string(self, target, prop, params: Optional[Tuple] = ()) -> Tuple[Any]:
+        parameter_object = getattr(target.mixer_device, prop)
+        return parameter_object.str_for_value(parameter_object.value),
 
     def _start_mixer_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
         parameter_object = getattr(target.mixer_device, prop)
